@@ -49,15 +49,15 @@ def build_mock_review(title: str, notes: str):
             "Can you explain the key idea in simple English?",
             "Why is this concept useful in a real project or interview?",
             "What is one detail you should remember from this material?",
-            "How would you explain this topic in a 30-second interview answer?"
+            "How would you explain this topic in a 30-second interview answer?",
         ],
         "sample_answers": [
             f"The main topic was {title}.",
             "The key idea is to understand the concept, not only memorize the words.",
             "It is useful because it helps me explain technical ideas clearly and apply them in real projects.",
             "One important detail is to connect the concept with a concrete example.",
-            "In an interview, I would explain the concept clearly, give one example, and mention when I would use it."
-        ]
+            "In an interview, I would explain the concept clearly, give one example, and mention when I would use it.",
+        ],
     }
 
 
@@ -71,8 +71,7 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
             if page_text:
                 text_parts.append(page_text)
 
-        text = "\n".join(text_parts).strip()
-        return text
+        return "\n".join(text_parts).strip()
 
     except Exception:
         raise HTTPException(status_code=400, detail="Could not read PDF file.")
@@ -85,15 +84,24 @@ def read_root():
 
 @app.post("/api/review/generate", response_model=ReviewResponse)
 def generate_review(request: ReviewRequest):
+    if not request.title.strip():
+        raise HTTPException(status_code=400, detail="Study topic is required.")
+
+    if not request.notes.strip():
+        raise HTTPException(status_code=400, detail="Study notes are required.")
+
     return build_mock_review(request.title, request.notes)
 
 
 @app.post("/api/review/generate-from-pdf", response_model=ReviewResponse)
 async def generate_review_from_pdf(
     title: str = Form(...),
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
 ):
-    if not file.filename.lower().endswith(".pdf"):
+    if not title.strip():
+        raise HTTPException(status_code=400, detail="Study topic is required.")
+
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
     file_bytes = await file.read()
@@ -102,7 +110,7 @@ async def generate_review_from_pdf(
     if not extracted_text:
         raise HTTPException(
             status_code=400,
-            detail="No readable text found in this PDF. It may be a scanned PDF."
+            detail="No readable text found in this PDF. It may be a scanned PDF.",
         )
 
     return build_mock_review(title, extracted_text)

@@ -17,6 +17,27 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  function handlePdfChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    if (file.type !== "application/pdf") {
+      setError("Please upload a PDF file.");
+      setPdfFile(null);
+      return;
+    }
+
+    setPdfFile(file);
+    setError("");
+  }
+
+  function clearPdfFile() {
+    setPdfFile(null);
+  }
+
   async function generateReview() {
     if (!title.trim()) {
       setError("Please enter a study topic.");
@@ -40,10 +61,13 @@ export default function Home() {
         formData.append("title", title);
         formData.append("file", pdfFile);
 
-        response = await fetch("http://localhost:8000/api/review/generate-from-pdf", {
-          method: "POST",
-          body: formData,
-        });
+        response = await fetch(
+          "http://localhost:8000/api/review/generate-from-pdf",
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
       } else {
         response = await fetch("http://localhost:8000/api/review/generate", {
           method: "POST",
@@ -73,26 +97,6 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function handlePdfChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-
-    if (!file) {
-      return;
-    }
-
-    if (file.type !== "application/pdf") {
-      setError("Please upload a PDF file.");
-      return;
-    }
-
-    setPdfFile(file);
-    setError("");
-  }
-
-  function clearPdfFile() {
-    setPdfFile(null);
   }
 
   return (
@@ -142,11 +146,11 @@ export default function Home() {
 
               {pdfFile && (
                 <div className="mt-3 flex items-center justify-between rounded-lg bg-slate-900 px-3 py-2 text-sm text-slate-300">
-                  <span>{pdfFile.name}</span>
+                  <span className="truncate">{pdfFile.name}</span>
                   <button
                     type="button"
                     onClick={clearPdfFile}
-                    className="text-red-400 hover:text-red-300"
+                    className="ml-4 text-red-400 hover:text-red-300"
                   >
                     Remove
                   </button>
@@ -210,10 +214,11 @@ export default function Home() {
                   <h3 className="mb-2 font-semibold text-blue-300">
                     Review Questions
                   </h3>
+
                   <div className="space-y-3">
                     {result.questions.map((question, index) => (
                       <div
-                        key={question}
+                        key={`${question}-${index}`}
                         className="rounded-xl border border-slate-800 bg-slate-950 p-4"
                       >
                         <p className="mb-2 font-medium">
