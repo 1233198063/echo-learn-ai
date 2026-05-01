@@ -1,9 +1,17 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from pypdf import PdfReader
+import json
 from io import BytesIO
 
+from dotenv import load_dotenv
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from openai import OpenAI
+from pydantic import BaseModel
+from pypdf import PdfReader
+
+
+load_dotenv()
+
+client = OpenAI()
 
 app = FastAPI(title="EchoLearn AI API")
 
@@ -29,38 +37,6 @@ class ReviewResponse(BaseModel):
     sample_answers: list[str]
 
 
-def build_mock_review(title: str, notes: str):
-    short_notes = notes[:800]
-
-    return {
-        "summary": (
-            f"Today we are reviewing: {title}. "
-            f"The key idea is to understand the main concepts from your study material."
-        ),
-        "podcast_script": (
-            f"Good morning! Welcome back to EchoLearn AI. "
-            f"Yesterday, you studied {title}. "
-            f"Let's review the most important ideas in simple English. "
-            f"Here is a short review based on your notes: {short_notes}. "
-            f"Now, try to explain the key ideas out loud in your own words."
-        ),
-        "questions": [
-            f"What was the main topic you learned about {title}?",
-            "Can you explain the key idea in simple English?",
-            "Why is this concept useful in a real project or interview?",
-            "What is one detail you should remember from this material?",
-            "How would you explain this topic in a 30-second interview answer?",
-        ],
-        "sample_answers": [
-            f"The main topic was {title}.",
-            "The key idea is to understand the concept, not only memorize the words.",
-            "It is useful because it helps me explain technical ideas clearly and apply them in real projects.",
-            "One important detail is to connect the concept with a concrete example.",
-            "In an interview, I would explain the concept clearly, give one example, and mention when I would use it.",
-        ],
-    }
-
-
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     try:
         reader = PdfReader(BytesIO(file_bytes))
@@ -77,6 +53,112 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
         raise HTTPException(status_code=400, detail="Could not read PDF file.")
 
 
+def trim_study_notes(notes: str, max_chars: int = 12000) -> str:
+    """
+    Keep the first version simple:
+    limit long notes/PDF text to avoid very large API requests.
+    Later we can improve this with chunking.
+    """
+    cleaned = notes.strip()
+
+    if len(cleaned) <= max_chars:
+        return cleaned
+
+    return cleaned[:max_chars]
+
+
+def generate_ai_review(title: str, notes: str) -> ReviewResponse:
+    study_text = trim_study_notes(notes)
+
+    if not study_text:
+        raise HTTPException(status_code=400, detail="Study material is empty.")
+
+    try:
+        response = client.responses.create(
+            model="gpt-4o-mini",
+            instructions=(
+                "You are EchoLearn AI, an English learning and knowledge review assistant. "
+                "Your job is to transform study notes into a short English podcast-style review. "
+                "Use simple, natural, daily English. "
+                "The user is practicing both technical understanding and spoken English. "
+                "Make the content clear, encouraging, and interview-friendly."
+            ),
+            input=f"""
+Study topic:
+{title}
+
+Study material:
+{study_text}
+
+Create a review session with:
+1. A concise summary.
+2. A 3-5 minute English podcast-style script.
+3. Five review questions in English.
+4. Five sample answers in simple, natural English.
+
+Important requirements:
+- The podcast script should sound like a friendly morning review.
+- The questions should help active recall.
+- The sample answers should be easy to speak out loud.
+- If the topic is technical, include practical interview-style explanations.
+- Do not invent details that are not supported by the study material.
+""",
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "review_response",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "summary": {
+                                "type": "string",
+                                "description": "A concise summary of the study material.",
+                            },
+                            "podcast_script": {
+                                "type": "string",
+                                "description": "A friendly English podcast-style review script.",
+                            },
+                            "questions": {
+                                "type": "array",
+                                "description": "Five active recall questions.",
+                                "items": {"type": "string"},
+                            },
+                            "sample_answers": {
+                                "type": "array",
+                                "description": "Five sample spoken-English answers matching the questions.",
+                                "items": {"type": "string"},
+                            },
+                        },
+                        "required": [
+                            "summary",
+                            "podcast_script",
+                            "questions",
+                            "sample_answers",
+                        ],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+        )
+
+        data = json.loads(response.output_text)
+
+        return ReviewResponse(
+            summary=data["summary"],
+            podcast_script=data["podcast_script"],
+            questions=data["questions"],
+            sample_answers=data["sample_answers"],
+        )
+
+    except Exception as error:
+        print("OpenAI API error:", error)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate AI review. Please check your OpenAI API key and backend logs.",
+        )
+
+
 @app.get("/")
 def read_root():
     return {"message": "EchoLearn AI backend is running"}
@@ -90,7 +172,7 @@ def generate_review(request: ReviewRequest):
     if not request.notes.strip():
         raise HTTPException(status_code=400, detail="Study notes are required.")
 
-    return build_mock_review(request.title, request.notes)
+    return generate_ai_review(request.title, request.notes)
 
 
 @app.post("/api/review/generate-from-pdf", response_model=ReviewResponse)
@@ -113,4 +195,4 @@ async def generate_review_from_pdf(
             detail="No readable text found in this PDF. It may be a scanned PDF.",
         )
 
-    return build_mock_review(title, extracted_text)
+    return generate_ai_review(title, extracted_text)
