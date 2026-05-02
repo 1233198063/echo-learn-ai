@@ -16,6 +16,8 @@ export default function Home() {
   const [result, setResult] = useState<ReviewResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [audioUrl, setAudioUrl] = useState("");
+  const [audioLoading, setAudioLoading] = useState(false);
 
   function handlePdfChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -96,6 +98,45 @@ export default function Home() {
       }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function generateAudio() {
+    if (!result?.podcast_script) {
+      setError("Please generate a review first.");
+      return;
+    }
+
+    try {
+      setAudioLoading(true);
+      setError("");
+
+      const response = await fetch("http://localhost:8000/api/audio/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text: result.podcast_script,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to generate audio.");
+      }
+
+      const audioBlob = await response.blob();
+      const url = URL.createObjectURL(audioBlob);
+      setAudioUrl(url);
+    } catch (err) {
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError("Something went wrong while generating audio.");
+      }
+    } finally {
+      setAudioLoading(false);
     }
   }
 
@@ -205,9 +246,32 @@ export default function Home() {
                   <h3 className="mb-2 font-semibold text-blue-300">
                     Podcast Script
                   </h3>
+
                   <p className="rounded-xl bg-slate-950 p-4 leading-7 text-slate-200">
                     {result.podcast_script}
                   </p>
+
+                  <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950 p-4">
+                    <p className="mb-3 text-xs text-slate-500">
+                      This audio is AI-generated for learning and review practice.
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={generateAudio}
+                      disabled={audioLoading}
+                      className="mb-4 rounded-xl bg-emerald-500 px-4 py-3 font-semibold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {audioLoading ? "Generating Audio..." : "Generate Podcast Audio"}
+                    </button>
+
+                    {audioUrl && (
+                      <audio controls className="w-full">
+                        <source src={audioUrl} type="audio/mpeg" />
+                        Your browser does not support the audio element.
+                      </audio>
+                    )}
+                  </div>
                 </section>
 
                 <section>

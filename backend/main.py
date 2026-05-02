@@ -4,6 +4,7 @@ from io import BytesIO
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from openai import OpenAI
 from pydantic import BaseModel
 from pypdf import PdfReader
@@ -29,6 +30,8 @@ class ReviewRequest(BaseModel):
     title: str
     notes: str
 
+class AudioRequest(BaseModel):
+    text: str
 
 class ReviewResponse(BaseModel):
     summary: str
@@ -196,3 +199,37 @@ async def generate_review_from_pdf(
         )
 
     return generate_ai_review(title, extracted_text)
+
+@app.post("/api/audio/generate")
+def generate_audio(request: AudioRequest):
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="Text is required.")
+
+    try:
+        audio_response = client.audio.speech.create(
+            model="gpt-4o-mini-tts",
+            voice="coral",
+            input=request.text,
+            instructions=(
+                "Speak in a warm, clear, encouraging podcast style. "
+                "Use natural American English. "
+                "Keep the pace comfortable for an English learner."
+            ),
+        )
+
+        audio_bytes = audio_response.read()
+
+        return Response(
+            content=audio_bytes,
+            media_type="audio/mpeg",
+            headers={
+                "Content-Disposition": "inline; filename=echolearn-review.mp3"
+            },
+        )
+
+    except Exception as error:
+        print("OpenAI TTS error:", error)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate audio. Please check your OpenAI API key, quota, and backend logs.",
+        )
