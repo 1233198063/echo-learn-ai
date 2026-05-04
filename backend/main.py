@@ -1,3 +1,4 @@
+import base64
 import json
 from io import BytesIO
 
@@ -232,4 +233,53 @@ def generate_audio(request: AudioRequest):
         raise HTTPException(
             status_code=500,
             detail="Failed to generate audio. Please check your OpenAI API key, quota, and backend logs.",
+        )
+
+
+@app.post("/api/audio/generate-with-timestamps")
+def generate_audio_with_timestamps(request: AudioRequest):
+    """Generate TTS audio and return it with per-segment timestamps from Whisper."""
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="Text is required.")
+
+    try:
+        # Step 1: generate TTS audio
+        audio_response = client.audio.speech.create(
+            model="gpt-4o-mini-tts",
+            voice="coral",
+            input=request.text,
+            instructions=(
+                "Speak in a warm, clear, encouraging podcast style. "
+                "Use natural American English. "
+                "Keep the pace comfortable for an English learner."
+            ),
+        )
+        audio_bytes = audio_response.read()
+
+        # Step 2: transcribe the audio with Whisper to get sentence-level timestamps
+        audio_file = BytesIO(audio_bytes)
+        audio_file.name = "audio.mp3"  # OpenAI SDK needs a filename to detect format
+
+        transcription = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            response_format="verbose_json",
+            timestamp_granularities=["segment"],
+        )
+
+        segments = [
+            {"text": seg.text, "start": seg.start, "end": seg.end}
+            for seg in transcription.segments
+        ]
+
+        # Step 3: encode audio as base64 so it can travel in the JSON response
+        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+        return {"audio_base64": audio_base64, "segments": segments}
+
+    except Exception as error:
+        print("Audio + timestamp generation error:", error)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate audio with timestamps. Please check your OpenAI API key, quota, and backend logs.",
         )

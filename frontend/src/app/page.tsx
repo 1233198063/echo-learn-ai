@@ -1,12 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 
 type ReviewResult = {
   summary: string;
   podcast_script: string;
   questions: string[];
   sample_answers: string[];
+};
+
+type AudioSegment = {
+  text: string;
+  start: number;
+  end: number;
 };
 
 export default function Home() {
@@ -18,6 +24,21 @@ export default function Home() {
   const [error, setError] = useState("");
   const [audioUrl, setAudioUrl] = useState("");
   const [audioLoading, setAudioLoading] = useState(false);
+  const [audioSegments, setAudioSegments] = useState<AudioSegment[]>([]);
+  const [currentTime, setCurrentTime] = useState(0);
+
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const activeSegmentRef = useRef<HTMLSpanElement>(null);
+
+  // Scroll the highlighted segment into view whenever it changes
+  useEffect(() => {
+    if (activeSegmentRef.current) {
+      activeSegmentRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    }
+  }, [currentTime]);
 
   function handlePdfChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -55,6 +76,10 @@ export default function Home() {
       setLoading(true);
       setError("");
       setResult(null);
+      // Reset audio state when generating a new review
+      setAudioUrl("");
+      setAudioSegments([]);
+      setCurrentTime(0);
 
       let response: Response;
 
@@ -110,25 +135,36 @@ export default function Home() {
     try {
       setAudioLoading(true);
       setError("");
+      setAudioSegments([]);
+      setCurrentTime(0);
 
-      const response = await fetch("http://localhost:8000/api/audio/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          text: result.podcast_script,
-        }),
-      });
+      const response = await fetch(
+        "http://localhost:8000/api/audio/generate-with-timestamps",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: result.podcast_script }),
+        }
+      );
 
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || "Failed to generate audio.");
       }
 
-      const audioBlob = await response.blob();
+      const data = await response.json();
+
+      // Decode base64 audio into a blob URL
+      const binaryStr = atob(data.audio_base64);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      const audioBlob = new Blob([bytes], { type: "audio/mpeg" });
       const url = URL.createObjectURL(audioBlob);
+
       setAudioUrl(url);
+      setAudioSegments(data.segments);
     } catch (err) {
       if (err instanceof Error) {
         setError(err.message);
@@ -139,6 +175,17 @@ export default function Home() {
       setAudioLoading(false);
     }
   }
+
+  function handleTimeUpdate() {
+    if (audioRef.current) {
+      setCurrentTime(audioRef.current.currentTime);
+    }
+  }
+
+  // Index of the segment that is currently being spoken
+  const activeSegmentIndex = audioSegments.findIndex(
+    (seg) => currentTime >= seg.start && currentTime < seg.end
+  );
 
   return (
     <main className="min-h-screen bg-slate-950 text-white">
@@ -247,9 +294,32 @@ export default function Home() {
                     Podcast Script
                   </h3>
 
-                  <p className="rounded-xl bg-slate-950 p-4 leading-7 text-slate-200">
-                    {result.podcast_script}
-                  </p>
+                  {/* Render segments with per-sentence highlighting when audio is loaded,
+                      otherwise fall back to the raw script text */}
+                  {audioSegments.length > 0 ? (
+                    <div className="max-h-64 overflow-y-auto rounded-xl bg-slate-950 p-4 leading-7 text-slate-200">
+                      {audioSegments.map((seg, index) => {
+                        const isActive = index === activeSegmentIndex;
+                        return (
+                          <span
+                            key={index}
+                            ref={isActive ? activeSegmentRef : null}
+                            className={
+                              isActive
+                                ? "rounded bg-yellow-400/25 text-yellow-100 transition-colors duration-200"
+                                : "transition-colors duration-200"
+                            }
+                          >
+                            {seg.text}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl bg-slate-950 p-4 leading-7 text-slate-200">
+                      {result.podcast_script}
+                    </p>
+                  )}
 
                   <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950 p-4">
                     <p className="mb-3 text-xs text-slate-500">
@@ -262,11 +332,20 @@ export default function Home() {
                       disabled={audioLoading}
                       className="mb-4 rounded-xl bg-emerald-500 px-4 py-3 font-semibold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {audioLoading ? "Generating Audio..." : "Generate Podcast Audio"}
+                      {audioLoading
+                        ? "Generating Audio..."
+                        : audioUrl
+                        ? "Regenerate Podcast Audio"
+                        : "Generate Podcast Audio"}
                     </button>
 
                     {audioUrl && (
-                      <audio controls className="w-full">
+                      <audio
+                        ref={audioRef}
+                        controls
+                        className="w-full"
+                        onTimeUpdate={handleTimeUpdate}
+                      >
                         <source src={audioUrl} type="audio/mpeg" />
                         Your browser does not support the audio element.
                       </audio>
